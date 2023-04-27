@@ -6,7 +6,7 @@ A simple way to build and maintain ports of Go packages that everyone can contri
 
 Wharf automatically tries to fix build errors caused by packages that don't support z/OS
 by investigating type checking errors and updating module dependencies/retagging files to include
-missing function, varialble, constant, type definitions.
+missing function, variable, constant, type definitions.
 
 This program can:
 * Port existing packages in a workspace
@@ -18,7 +18,7 @@ This program can:
 
 Run it similarly to `go build`.
 
-`wharf [-d] [-v] [-t] [-tags] <packages>`
+`wharf [-n] [-v] [-t] [-config] [-tags] <packages>`
 
 Currently wharf only supports executing within a workspace (which means operating similarly to `go build -mod=readonly`)
 
@@ -35,6 +35,12 @@ Run unit tests found in packages that were altered and output their result (igno
 
 **-v**
 Enable verbose output
+
+**-config**
+Pass in a path to a config file for additional functionality when porting (see [internal/direct/defaults.yaml](internal/direct/defaults.yaml))
+
+**-tags**
+Pass in a comma seperated list of tags to for processing source code files with (see `go build -tags`)
 
 ### Planned Features
 
