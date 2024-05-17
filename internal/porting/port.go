@@ -33,6 +33,11 @@ var (
 
 	// Keep track of what modules we have updated
 	modcache map[string]*modulepatch
+
+	// Machine readable actions
+	// TODO: refactor so that this isn't generated at the end
+	ModuleActions  []ModuleAction
+	PackageActions []PackageAction
 )
 
 // The main entry point for porting
@@ -288,8 +293,9 @@ func port(pkg *packages.Package, cfg *Config) error {
 
 		if mptc == nil {
 			mptc = &modulepatch{
-				version: mod.Version,
-				action:  modLocked,
+				original: mod.Version,
+				version:  mod.Version,
+				action:   modLocked,
 			}
 			modcache[pkg.Module.Path] = mptc
 
@@ -298,7 +304,7 @@ func port(pkg *packages.Package, cfg *Config) error {
 				return err
 			}
 
-			updated := version != uver
+			updated = version != uver
 
 			if updated {
 				version = uver
@@ -514,7 +520,22 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 	showActions := cfg.Verbose || cfg.DryRun
 	makeDiff := !cfg.DryRun && cfg.Options["CREATE-PATCH-FILES"] != nil
 	diffs := make(map[string]bool)
+	ModuleActions = make([]ModuleAction, 0, len(modcache))
+	PackageActions = make([]PackageAction, 0, 10)
 
+	for path, ptc := range modcache {
+		var action ModuleAction
+		action.Path = path
+		action.Version = ptc.original
+		action.Fixed = ptc.version
+		action.Imported = ptc.action == modImported
+		if action.Imported {
+			action.Dir = filepath.Join(cfg.ImportDir, path)
+		}
+		ModuleActions = append(ModuleActions, action)
+	}
+
+	// TODO change this to be printed at the end
 	for path, ptc := range modcache {
 		fmt.Printf("%v %v ", path, ptc.version)
 		switch ptc.action {
@@ -531,7 +552,12 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 	}
 
 	for _, pkg := range pkgs {
-		fmt.Println("#", pkg.ImportPath)
+		// fmt.Println("#", pkg.ImportPath)
+		var action PackageAction
+		action.Path = pkg.ImportPath
+		action.Module = pkg.Module.Path
+		action.Dir = pkg.Dir
+
 		if makeDiff {
 			diffs[pkg.Module.Dir] = true
 		}
@@ -546,6 +572,7 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 		// Perform a clone to workspace if necessary
 		if !pkg.Module.Main {
 			path := filepath.Join(cfg.ImportDir, pkg.Module.Path)
+			action.Dir = path
 
 			if cfg.UseVCS {
 				if err := util.CloneModuleFromVCS(
@@ -601,6 +628,11 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 				}
 			}
 		} else {
+			retagAction := make(map[string]any)
+			retagAction["type"] = "retag"
+			retagAction["platforms"] = pcfg.Platforms[:]
+			action.Actions = append(action.Actions, retagAction)
+
 			fmt.Print("Applying tags to match platform(s): ")
 			for pidx, pltf := range pcfg.Platforms {
 				fmt.Print(pltf)
@@ -618,16 +650,27 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 
 			// Apply changes to files that were changed
 			for _, gofile := range pcfg.GoFiles {
+				var fileAction FileAction
+				fileAction.Name = gofile.Name
+				fileAction.Build = !current[gofile]
+
 				ovr := pcfg.Override[gofile.Name]
 				if ovr != nil {
+					action.Files = append(action.Files, fileAction)
 					// Copy overriden files from the cache
 					newName := fmt.Sprintf("%v_%v.go", strings.TrimSuffix(gofile.Name, ".go"), packages.Goos)
+					var ovrFileAction FileAction
+					ovrFileAction.BaseFile = gofile.Name
+					ovrFileAction.Name = newName
+					ovrFileAction.Build = true
+					action.Files = append(action.Files, ovrFileAction)
 
 					if showActions {
 						fmt.Printf("%v: copied to %v\n", gofile.Name, newName)
 					}
 
 					if current[gofile] {
+						action.Files = append(action.Files, fileAction)
 						if showActions {
 							fmt.Printf("%v: added tag '!%v'\n", gofile.Name, packages.Goos)
 						}
@@ -675,17 +718,25 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 					// Describe the change changes
 					if showActions {
 						fmt.Printf("%v: added tag '%v'\n", newName, packages.Goos)
-						for iname, symbols := range ovr.Meta.(map[string]map[string]direct.ExportDirective) {
-							for symname, ed := range symbols {
-								var repstr string
-								switch ed.Type {
-								case "EXPORT":
-									repstr = iname + "." + ed.Replace
-								case "CONTSTANT":
-									repstr = ed.Replace
-								default:
-									panic("unknown export directive type")
-								}
+					}
+					for iname, symbols := range ovr.Meta.(map[string]map[string]direct.ExportDirective) {
+						for symname, ed := range symbols {
+							var repstr string
+							switch ed.Type {
+							case "EXPORT":
+								repstr = iname + "." + ed.Replace
+							case "CONTSTANT":
+								repstr = ed.Replace
+							default:
+								panic("unknown export directive type")
+							}
+							modifyAction := make(map[string]any, 4)
+							modifyAction["type"] = "modify"
+							modifyAction["file"] = gofile.Name
+							modifyAction["token"] = fmt.Sprintf("%v.%v", iname, symname)
+							modifyAction["change"] = repstr
+							action.Actions = append(action.Actions, modifyAction)
+							if showActions {
 								fmt.Printf("%v: replaced %v.%v with %v\n", newName, iname, symname, repstr)
 							}
 						}
@@ -696,6 +747,7 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 					}
 
 				} else if !current[gofile] {
+					action.Files = append(action.Files, fileAction)
 					// Add tags to files that were not in the default config
 					fmt.Printf("%v: added %v tag\n", gofile.Name, packages.Goos)
 
@@ -741,7 +793,13 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 
 			// Any files that we have left and aren't seen in the current config, we tag to exclude
 			for gofile := range current {
-				fmt.Printf("%v: added !%v tag\n", gofile.Name, packages.Goos)
+				var fileAction FileAction
+				fileAction.Name = gofile.Name
+				fileAction.Build = false
+				action.Files = append(action.Files, fileAction)
+				if showActions {
+					fmt.Printf("%v: added !%v tag\n", gofile.Name, packages.Goos)
+				}
 
 				src, err := util.Format(gofile.Syntax, pkg.Fset)
 				if err != nil {
@@ -759,6 +817,7 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 				}
 			}
 		}
+		PackageActions = append(PackageActions, action)
 	}
 
 	if makeDiff && len(diffs) > 0 {

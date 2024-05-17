@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -154,6 +155,16 @@ func main() {
 		fmt.Println("Porting failed due to errors mentioned above")
 	} else {
 		fmt.Println("Patches applied successfully!")
+		fmt.Println("\n ---- \n")
+		outjson := make(map[string]any, 2)
+		outjson["modules"] = porting.ModuleActions
+		outjson["packages"] = porting.PackageActions
+		if outstrm, err := json.MarshalIndent(outjson, "", "\t"); err == nil {
+			fmt.Println(string(outstrm))
+		} else {
+			fmt.Println("%v", err)
+		}
+
 		if *testFlag {
 			// Run tests
 			// TODO: this could be better... such as run tests on packages we specifically touched as well
