@@ -104,8 +104,9 @@ teardown:
 		); werr != nil {
 			goto onCopyFail
 		}
-
-		fmt.Println("Backed up workspace to", backup)
+		if config.Verbose {
+			fmt.Println("Backed up workspace to", backup)
+		}
 
 		if werr := util.CopyFile(
 			config.GoEnv["GOWORK"],
@@ -164,7 +165,6 @@ load:
 
 	valid := true
 	forceLoad = false
-
 	for {
 
 		for _, pkg := range stack.Packages {

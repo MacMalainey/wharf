@@ -1,0 +1,3 @@
+github.com/spf13/afero:
+  tests:
+    - version: v1.7.0

@@ -1,0 +1,44 @@
+{
+    "modules": [
+        {
+            "path": "MODULE_PATH",
+            "version": "ORIGINAL_VERSION_INFO",
+            "fixed": "NEW_VERSION_INFO",
+            "dir": "CURRENT_PATH",
+            "imported": false
+        }
+    ],
+    "packages": [
+        {
+            "path": "PACKAGE_PATH",
+            "module": "MODULE_PATH",
+            "dir": "FILESYSTEM_PATH",
+            "actions": [
+                {
+                    "type": "retag",
+                    "platforms": ["linux"]
+                },
+                {
+                    "type": "modify",
+                    "file": "a.go",
+                    "token": "TOKEN",
+                    "change": "REPLACMENT"
+                }
+            ],
+            "files": [
+                {
+                    "name": "FILENAME",
+                    "build": true,
+                    "baseFile": "FILENAME OR NULL",
+                    "lines": [
+                        {
+                            "line": 64,
+                            "original": "ORIGINAL_LINE",
+                            "current": "CURRENT_LINE"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
