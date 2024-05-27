@@ -1,4 +1,0 @@
-module: github.com/syndtr/goleveldb
-
-paths:
-  - github.com/syndtr/goleveldb/leveldb

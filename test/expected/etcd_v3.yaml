@@ -1,2 +1,0 @@
-module: go.etcd.io/etcd/v3
-go_version: go1.22.0

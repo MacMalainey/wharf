@@ -26,6 +26,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type jsonOut struct {
+	Modules  []porting.ModuleAction
+	Packages []porting.PackageAction
+}
+
 const WHARF_TEST_RUN = "WHARF_TEST_RUN"
 
 //go:embed test/expected/*.json
@@ -84,7 +89,7 @@ func satisfyGoVersion(ver string) (bool, error) {
 	var major, minor, rmajor, rminor int
 	info := goVersionRx.FindStringSubmatch(ver)
 	if info == nil {
-		return false, errors.New(fmt.Sprintf("invalid go version: %v", ver))
+		return false, fmt.Errorf("invalid go version: %v", ver)
 	}
 	major, _ = strconv.Atoi(info[1])
 	if len(info) > 2 {
@@ -93,7 +98,7 @@ func satisfyGoVersion(ver string) (bool, error) {
 
 	rinfo := goVersionRx.FindStringSubmatch(runtime.Version())
 	if rinfo == nil {
-		return false, errors.New(fmt.Sprintf("unable to parse runtime version: %v", ver))
+		return false, fmt.Errorf("unable to parse runtime version: %v", ver)
 	}
 	rmajor, _ = strconv.Atoi(info[1])
 	if len(info) > 2 {
@@ -107,6 +112,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	if _, ranAsWharf := os.LookupEnv(WHARF_TEST_RUN); ranAsWharf {
+		porting.SuppressOutput = true
 		if err := main1(os.Args[1:], []string{}, false, false, false, false, "", make(map[string]any)); err == nil {
 			// TODO: make this shared behaviour within main1
 			outjson := make(map[string]any, 2)
@@ -195,7 +201,7 @@ func TestModules(t *testing.T) {
 						rpath = fmt.Sprintf("%v@%v.json", module.Name, test.Name)
 					}
 
-					var expect map[string]any // TODO: make concrete
+					var expect porting.ActionList // TODO: make concrete
 					if !test.simple {
 						if b, err := expectedFS.ReadFile(filepath.Join("test/expected", rpath)); err != nil {
 							t.Fatalf("unable to read test data %v: %v", rpath, err)
@@ -250,6 +256,8 @@ func TestModules(t *testing.T) {
 					} else if _, err = os.Stat(filepath.Join(testRoot, "go.work")); err != nil {
 						t.Fatalf("go.work not created: unable to stat go.work: %v", err)
 					}
+					cpcmd := exec.Command("cp", "-r", testRoot, "/home/macmala/wharf-wk/testout")
+					cpcmd.Run()
 					cmd = exec.Command(testBin, test.Paths...)
 					cmd.Dir = testRoot
 					cmd.Env = append(os.Environ(), "WHARF_TEST_RUN=1")
@@ -258,15 +266,120 @@ func TestModules(t *testing.T) {
 					cmd.Stdout = &stdout
 					cmd.Stderr = &stderr
 					if err := cmd.Run(); err != nil {
-						fmt.Println(stdout.String())
 						fmt.Println(stderr.String())
 						t.Fatalf("wharf failure: %v", err)
 					}
 					fmt.Println(stdout.String())
+					out := jsonOut{}
+					if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+						t.Fatalf("unable to parse output: %v", err)
+					}
 
-					// HANDLE OUTPUT
+					if len(expect.Modules) != len(out.Modules) {
+						t.FailNow()
+					}
+					moduleSet := make(map[string]*porting.ModuleAction, len(expect.Modules))
+					for i := range expect.Modules {
+						mod := &expect.Modules[i]
+						moduleSet[mod.Path] = mod
+					}
+					for _, oMod := range out.Modules {
+						if eMod, ok := moduleSet[oMod.Path]; !ok {
+							t.FailNow()
+						} else if !compareModules(eMod, &oMod) {
+							t.FailNow()
+						}
+					}
+
+					if len(expect.Packages) != len(out.Packages) {
+						t.FailNow()
+					}
+					packageSet := make(map[string]*porting.PackageAction, len(expect.Packages))
+					for i := range expect.Packages {
+						pkg := &expect.Packages[i]
+						packageSet[pkg.Path] = pkg
+					}
+					for _, oPkg := range out.Packages {
+						if ePkg, ok := packageSet[oPkg.Path]; !ok {
+							t.FailNow()
+						} else if !comparePackages(ePkg, &oPkg) {
+							t.FailNow()
+						}
+					}
 				})
 			}
 		})
 	}
+}
+
+func compareModules(a *porting.ModuleAction, b *porting.ModuleAction) bool {
+	if a.Path != b.Path || a.Version != b.Version {
+		return false
+	}
+
+	aVerChanged := a.Fixed != a.Version
+	bVerChanged := b.Fixed != b.Version
+	if aVerChanged != bVerChanged {
+		return false
+	}
+
+	if a.Imported != b.Imported {
+		return false
+	}
+
+	return true
+}
+
+func comparePackages(a *porting.PackageAction, b *porting.PackageAction) bool {
+	if a.Path != b.Path || a.Module != b.Module {
+		return false
+	}
+
+	if len(a.Tags) != len(b.Tags) {
+		return false
+	}
+	tags := make(map[string]bool, len(a.Tags))
+	for _, aTag := range a.Tags {
+		tags[aTag] = true
+	}
+	for _, bTag := range b.Tags {
+		delete(tags, bTag)
+	}
+	if len(tags) > 0 {
+		return false
+	}
+
+	if len(a.Tokens) != len(b.Tokens) {
+		return false
+	}
+	tokens := make(map[string]*porting.TokenAction, len(a.Tokens))
+	for i := range a.Tokens {
+		aToken := &a.Tokens[i]
+		tokens[aToken.File+aToken.Token] = aToken
+	}
+	for _, bToken := range b.Tokens {
+		if aToken, ok := tokens[bToken.File+bToken.Token]; !ok {
+			return false
+		} else if aToken.File != bToken.File || aToken.Token != bToken.Token || aToken.Change != bToken.Change {
+			return false
+		}
+	}
+
+	if len(a.Files) != len(b.Files) {
+		return false
+	}
+	files := make(map[string]*porting.FileAction, len(a.Files))
+	for i := range a.Files {
+		aFile := &a.Files[i]
+		files[aFile.Name] = aFile
+	}
+	for _, bFile := range b.Files {
+		if aFile, ok := files[bFile.Name]; !ok {
+			return false
+		} else if aFile.Build != bFile.Build || aFile.BaseFile != bFile.BaseFile {
+			return false
+		}
+	}
+
+	return true
 }

@@ -40,6 +40,8 @@ var (
 	PackageActions []PackageAction
 )
 
+var SuppressOutput = false
+
 // The main entry point for porting
 //
 // Loads and type checks the packages and all dependencies for the given paths
@@ -104,7 +106,7 @@ teardown:
 		); werr != nil {
 			goto onCopyFail
 		}
-		if config.Verbose {
+		if config.Verbose && !SuppressOutput {
 			fmt.Println("Backed up workspace to", backup)
 		}
 
@@ -115,21 +117,23 @@ teardown:
 			goto onCopyFail
 		}
 
-		if werr := os.Remove(aGoWork + ".sum"); werr != nil && !errors.Is(werr, fs.ErrNotExist) {
+		if werr := os.Remove(aGoWork + ".sum"); werr != nil && !errors.Is(werr, fs.ErrNotExist) && !SuppressOutput {
 			fmt.Println("WARNING - unable to remove our go.work.sum file:", aGoWork+".sum")
 		}
 
-		if werr := os.Remove(aGoWork); werr != nil {
+		if werr := os.Remove(aGoWork); werr != nil && !SuppressOutput {
 			fmt.Println("WARNING - unable to remove our go.work file:", aGoWork)
 		}
 
 		goto onCopyPass
 
 	onCopyFail:
-		fmt.Println("An error occurred:")
-		fmt.Println("\tUnable to replace the current GOWORK file with our copy.")
-		fmt.Println("\tTherefore, some patches might not be applied.")
-		fmt.Println("\tOur copy is located here:", aGoWork)
+		if !SuppressOutput {
+			fmt.Println("An error occurred:")
+			fmt.Println("\tUnable to replace the current GOWORK file with our copy.")
+			fmt.Println("\tTherefore, some patches might not be applied.")
+			fmt.Println("\tOur copy is located here:", aGoWork)
+		}
 
 	onCopyPass:
 	}
@@ -257,7 +261,9 @@ func port(pkg *packages.Package, cfg *Config) error {
 				illList = append(illList, err)
 			}
 			if !hasErr {
-				fmt.Println("Build errors occurred in:", pkg.ImportPath)
+				if !SuppressOutput {
+					fmt.Println("Build errors occurred in:", pkg.ImportPath)
+				}
 				hasErr = true
 			}
 			if cfg.Verbose {
@@ -517,7 +523,7 @@ func port(pkg *packages.Package, cfg *Config) error {
 }
 
 func apply(pkgs []*packages.Package, cfg *Config) error {
-	showActions := cfg.Verbose || cfg.DryRun
+	showActions := (cfg.Verbose || cfg.DryRun) && !SuppressOutput
 	makeDiff := !cfg.DryRun && cfg.Options["CREATE-PATCH-FILES"] != nil
 	diffs := make(map[string]bool)
 	ModuleActions = make([]ModuleAction, 0, len(modcache))
@@ -536,19 +542,21 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 	}
 
 	// TODO change this to be printed at the end
-	for path, ptc := range modcache {
-		fmt.Printf("%v %v ", path, ptc.version)
-		switch ptc.action {
-		case modUpdated:
-			fmt.Print("(UPDATED)")
-		case modLocked:
-			fmt.Print("(LOCKED)")
-		case modImported:
-			fmt.Print("(IMPORTED)")
-		default:
-			panic("unknown mod action")
+	if !SuppressOutput {
+		for path, ptc := range modcache {
+			fmt.Printf("%v %v ", path, ptc.version)
+			switch ptc.action {
+			case modUpdated:
+				fmt.Print("(UPDATED)")
+			case modLocked:
+				fmt.Print("(LOCKED)")
+			case modImported:
+				fmt.Print("(IMPORTED)")
+			default:
+				panic("unknown mod action")
+			}
+			fmt.Println()
 		}
-		fmt.Println()
 	}
 
 	for _, pkg := range pkgs {
@@ -620,7 +628,9 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 		// Print out description of patch
 		// Platform == 0 (default) when we apply a manual patch
 		if len(pcfg.Platforms) == 0 {
-			fmt.Println("Applied manual patch")
+			if !SuppressOutput {
+				fmt.Println("Applied manual patch")
+			}
 
 			for _, gofile := range pcfg.GoFiles {
 				if ovr := pcfg.Override[gofile.Name]; ovr != nil {
@@ -628,19 +638,18 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 				}
 			}
 		} else {
-			retagAction := make(map[string]any)
-			retagAction["type"] = "retag"
-			retagAction["platforms"] = pcfg.Platforms[:]
-			action.Actions = append(action.Actions, retagAction)
+			action.Tags = pcfg.Platforms[:]
 
-			fmt.Print("Applying tags to match platform(s): ")
-			for pidx, pltf := range pcfg.Platforms {
-				fmt.Print(pltf)
-				if pidx < len(pcfg.Platforms)-1 {
-					fmt.Print(", ")
+			if !SuppressOutput {
+				fmt.Print("Applying tags to match platform(s): ")
+				for pidx, pltf := range pcfg.Platforms {
+					fmt.Print(pltf)
+					if pidx < len(pcfg.Platforms)-1 {
+						fmt.Print(", ")
+					}
 				}
+				fmt.Println()
 			}
-			fmt.Println()
 
 			// Mark the files that were active in the default config
 			current := make(map[*packages.GoFile]bool)
@@ -730,26 +739,27 @@ func apply(pkgs []*packages.Package, cfg *Config) error {
 							default:
 								panic("unknown export directive type")
 							}
-							modifyAction := make(map[string]any, 4)
-							modifyAction["type"] = "modify"
-							modifyAction["file"] = gofile.Name
-							modifyAction["token"] = fmt.Sprintf("%v.%v", iname, symname)
-							modifyAction["change"] = repstr
-							action.Actions = append(action.Actions, modifyAction)
+							action.Tokens = append(action.Tokens, TokenAction{
+								File:   gofile.Name,
+								Token:  fmt.Sprintf("%v.%v", iname, symname),
+								Change: repstr,
+							})
 							if showActions {
 								fmt.Printf("%v: replaced %v.%v with %v\n", newName, iname, symname, repstr)
 							}
 						}
 					}
 
-					if !showActions {
+					if !showActions && !SuppressOutput {
 						fmt.Printf("%v: fixed imports\n", gofile.Name)
 					}
 
 				} else if !current[gofile] {
 					action.Files = append(action.Files, fileAction)
 					// Add tags to files that were not in the default config
-					fmt.Printf("%v: added %v tag\n", gofile.Name, packages.Goos)
+					if showActions {
+						fmt.Printf("%v: added %v tag\n", gofile.Name, packages.Goos)
+					}
 
 					// the default config setting does not contain any files
 					// this means "build constraints exclude all Go files" (_BUILD_CONSTRAINS_EXCLUDE_ALL_FILE)

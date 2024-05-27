@@ -1,3 +1,7 @@
+// Licensed Materials - Property of IBM
+// Copyright IBM Corp. 2023.
+// US Government Users Restricted Rights - Use, duplication or disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+
 package porting
 
 type ActionList struct {
@@ -14,19 +18,26 @@ type ModuleAction struct {
 }
 
 type PackageAction struct {
-	Path    string
-	Module  string
-	Dir     string `json:",omitempty"`
-	Actions []map[string]any
-	Files   []FileAction
-	Error   string `json:",omitempty"`
+	Path   string
+	Module string
+	Dir    string        `json:",omitempty"`
+	Tags   []string      `json:",omitempty"`
+	Tokens []TokenAction `json:",omitempty"`
+	Files  []FileAction  `json:",omitempty"`
+	Error  string        `json:",omitempty"`
 }
 
 type FileAction struct {
 	Name     string
 	Build    bool
-	BaseFile string `json:",omitempty"`
+	BaseFile string       `json:",omitempty"`
 	Lines    []LineAction `json:",omitempty"`
+}
+
+type TokenAction struct {
+	File   string
+	Token  string
+	Change string
 }
 
 type LineAction struct {

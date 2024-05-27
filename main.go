@@ -5,7 +5,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -111,16 +110,6 @@ func main() {
 		fmt.Println("Porting failed due to errors mentioned above")
 	} else {
 		fmt.Println("Patches applied successfully!")
-		fmt.Println("\n ---- ")
-		fmt.Println("")
-		outjson := make(map[string]any, 2)
-		outjson["modules"] = porting.ModuleActions
-		outjson["packages"] = porting.PackageActions
-		if outstrm, err := json.MarshalIndent(outjson, "", "\t"); err == nil {
-			fmt.Println(string(outstrm))
-		} else {
-			fmt.Println(err.Error())
-		}
 
 		if *testFlag {
 			// Run tests
