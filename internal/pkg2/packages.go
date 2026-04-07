@@ -94,7 +94,7 @@ func (tree *ImportTree) Groups() [][]*Package {
 func (tree *ImportTree) Resolve() error {
 	layers := make([][]*Package, 0, 30)
 	layers = append(layers, make([]*Package, 0))
-	visited := make(map[string]bool, len(cache))
+	visited := make(map[string]bool, 50)
 
 	var visit func(pkg *Package) (int, error)
 	visit = func(pkg *Package) (int, error) {

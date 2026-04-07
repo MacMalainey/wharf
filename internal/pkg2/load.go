@@ -17,22 +17,31 @@ import (
 	"github.com/zosopentools/wharf/internal/util"
 )
 
-var debugPath string
-
-func lpanic(msg string) {
-	panic(fmt.Sprintf("%v: %v", debugPath, msg))
+// Loader manages package loading with isolated cache and debug state for thread-safe operation
+type Loader struct {
+	cache     map[string]*Package
+	debugPath string
 }
 
-var cache map[string]*Package = make(map[string]*Package, 50)
+// NewLoader creates a new Loader instance with an empty cache
+func NewLoader() *Loader {
+	return &Loader{
+		cache: make(map[string]*Package, 50),
+	}
+}
 
-// Use go-list to load all packages and build the initial tree
+func (l *Loader) lpanic(msg string) {
+	panic(fmt.Sprintf("%v: %v", l.debugPath, msg))
+}
+
+// List uses go-list to load all packages and build the initial tree
 //
 // We load as many packages as we can at once - and pick up any "unimported" packages
 // (packages that were imported by source files not marked for build under the present system)
 // Any unimported packages we then go and load ourselves (and continue this process until all packages are loaded)
-func List(paths []string) (ImportTree, error) {
+func (l *Loader) List(paths []string) (ImportTree, error) {
 	// fmt.Fprintf(os.Stderr, "\n#### LOAD #### \n\n")
-	found := make(map[string]*Package, len(cache))
+	found := make(map[string]*Package, len(l.cache))
 	seeking := make(map[string]bool, 10)
 
 	next := paths
@@ -40,11 +49,11 @@ func List(paths []string) (ImportTree, error) {
 	matching := make([]*Package, 0, len(paths))
 
 	identify := func(path string) *Package {
-		pkg := cache[path]
+		pkg := l.cache[path]
 		if pkg == nil {
 			// fmt.Fprintln(os.Stderr, path)
 			pkg = &Package{}
-			cache[path] = pkg
+			l.cache[path] = pkg
 		}
 		return pkg
 	}
@@ -71,13 +80,13 @@ func List(paths []string) (ImportTree, error) {
 		}
 
 		for _, meta := range metaPkgs {
-			debugPath = meta.ImportPath
+			l.debugPath = meta.ImportPath
 			if seeking[meta.ImportPath] {
 				delete(seeking, meta.ImportPath)
 			}
 			if found[meta.ImportPath] != nil {
 				if !meta.DepOnly {
-					lpanic("loaded a package more than once in the same pass")
+					l.lpanic("loaded a package more than once in the same pass")
 				}
 				continue
 			}
@@ -117,7 +126,7 @@ func List(paths []string) (ImportTree, error) {
 			// Go uses different directories for different module versions
 			if doLoad {
 				// fmt.Fprintf(os.Stderr, "\n# %v\n", pkg.Meta.ImportPath)
-				if err = loadPkg(pkg); err != nil {
+				if err = l.loadPkg(pkg); err != nil {
 					return ImportTree{}, err
 				}
 
@@ -169,12 +178,12 @@ func List(paths []string) (ImportTree, error) {
 				}
 
 				if iCount != len(pkg.Meta.Imports) {
-					lpanic(fmt.Sprintf("parsed imports and go-list imports length mismatch: found %v wanted %v", iCount, len(pkg.Meta.Imports)))
+					l.lpanic(fmt.Sprintf("parsed imports and go-list imports length mismatch: found %v wanted %v", iCount, len(pkg.Meta.Imports)))
 				}
 
 				for _, iPath := range pkg.Meta.Imports {
 					if !touchedIPaths[iPath] {
-						lpanic(fmt.Sprintf("parsed imports list missing go-list entry: %v", iPath))
+						l.lpanic(fmt.Sprintf("parsed imports list missing go-list entry: %v", iPath))
 					}
 				}
 			}
@@ -200,10 +209,10 @@ func List(paths []string) (ImportTree, error) {
 	return ImportTree{from: matching}, nil
 }
 
-func loadPkg(pkg *Package) error {
+func (l *Loader) loadPkg(pkg *Package) error {
 	var debugFile string
 	fpanic := func(msg string) {
-		lpanic(fmt.Sprintf("%v: %v", debugFile, msg))
+		l.lpanic(fmt.Sprintf("%v: %v", debugFile, msg))
 	}
 	pkg.Builds = make([]BuildConfig, 0, 2)
 	pkg.Files = make(map[string]*GoFile, len(pkg.Meta.GoFiles)+len(pkg.Meta.CgoFiles)+len(pkg.Meta.IgnoredGoFiles))
@@ -233,7 +242,7 @@ func loadPkg(pkg *Package) error {
 	getHash := func() uint64 {
 		hashCheck += 1
 		if hashCheck >= 64 {
-			lpanic("too many hashes")
+			l.lpanic("too many hashes")
 		}
 
 		hash := nextHash
@@ -256,7 +265,7 @@ func loadPkg(pkg *Package) error {
 			Default: true,
 		}
 		pkg.Files[fname] = file
-		if err := loadGoFile(file, FileSet, true, isStd); err != nil {
+		if err := l.loadGoFile(file, FileSet, true, isStd); err != nil {
 			return err
 		}
 
@@ -307,7 +316,7 @@ func loadPkg(pkg *Package) error {
 			Default: true,
 		}
 		pkg.Files[fname] = file
-		if err := loadGoFile(file, FileSet, true, isStd); err != nil {
+		if err := l.loadGoFile(file, FileSet, true, isStd); err != nil {
 			return err
 		}
 
@@ -357,7 +366,7 @@ func loadPkg(pkg *Package) error {
 				Path: filepath.Join(pkg.Meta.Dir, fname),
 			}
 			pkg.Files[fname] = file
-			if err := loadGoFile(file, FileSet, false, false); err != nil {
+			if err := l.loadGoFile(file, FileSet, false, false); err != nil {
 				return err
 			}
 
@@ -410,7 +419,7 @@ func loadPkg(pkg *Package) error {
 	return nil
 }
 
-func loadGoFile(file *GoFile, fset *token.FileSet, syntax bool, forceLoad bool) error {
+func (l *Loader) loadGoFile(file *GoFile, fset *token.FileSet, syntax bool, forceLoad bool) error {
 	src, err := os.ReadFile(file.Path)
 	if err != nil {
 		return err
@@ -470,7 +479,7 @@ func loadGoFile(file *GoFile, fset *token.FileSet, syntax bool, forceLoad bool) 
 			}
 		}
 		if file.Imports[name] != "" {
-			lpanic(fmt.Sprintf("%v: duplicate import name %v: (%v, %v)", file.Name, name, file.Imports[name], ipath))
+			l.lpanic(fmt.Sprintf("%v: duplicate import name %v: (%v, %v)", file.Name, name, file.Imports[name], ipath))
 		}
 		file.Imports[name] = ipath
 	}

@@ -29,9 +29,10 @@ func main2(
 }
 
 func run(paths []string, ctx *port2.Context, mute bool) error {
+	loader := pkg2.NewLoader()
 	firstPass := true
 load:
-	tree, err := pkg2.List(paths)
+	tree, err := loader.List(paths)
 	if err != nil {
 		return err
 	}
