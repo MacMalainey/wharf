@@ -52,6 +52,12 @@ func main() {
 	// Turn off log flags
 	log.SetFlags(0)
 
+	// Create config
+	cfg, err := base.NewConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// If --help is passed
 	if *helpFlag {
 		fmt.Println(helpText)
@@ -93,20 +99,20 @@ func main() {
 
 	if len(*tagsFlag) > 0 {
 		for _, tag := range strings.Split(*tagsFlag, ",") {
-			base.BuildTags[tag] = true
+			cfg.BuildTags[tag] = true
 		}
 	}
 
 	if len(*iDirFlag) > 0 {
-		base.ImportDir = *iDirFlag
+		cfg.ImportDir = *iDirFlag
 	}
 
 	// Bypass if set to force operations (this is intended for scripts to be able to use if necessary)
 	if !*forceFlag {
-		_, dstErr := os.Lstat(base.ImportDir)
+		_, dstErr := os.Lstat(cfg.ImportDir)
 		if dstErr == nil {
 			if isatty.IsTerminal(os.Stdin.Fd()) {
-				fmt.Printf("warning: import destination already exists: %v\n", base.ImportDir)
+				fmt.Printf("warning: import destination already exists: %v\n", cfg.ImportDir)
 				fmt.Println("warning: running Wharf may cause some data to get overridden")
 				fmt.Print("continue? [y/N]: ")
 				var confirm string
@@ -115,24 +121,24 @@ func main() {
 					os.Exit(0)
 				}
 			} else {
-				log.Fatalf("error: import destination already exists: %v\n", base.ImportDir)
+				log.Fatalf("error: import destination already exists: %v\n", cfg.ImportDir)
 			}
 		}
 	}
 
 	if *verboseFlag {
-		fmt.Println("importing modules to:", base.ImportDir)
+		fmt.Println("importing modules to:", cfg.ImportDir)
 	}
 
 	paths := flag.Args()
 
-	if base.GOWORK() == "" {
+	if cfg.GOWORK() == "" {
 		log.Fatalln("no workspace found; please initialize one using `go work init` and add modules")
 	}
 
 	// Setup a private go.work file to make changes to as we work - while keeping the original safe
-	wfWork := filepath.Join(filepath.Dir(base.GOWORK()), ".wharf.work")
-	if err := util.CopyFile(wfWork, base.GOWORK()); err != nil {
+	wfWork := filepath.Join(filepath.Dir(cfg.GOWORK()), ".wharf.work")
+	if err := util.CopyFile(wfWork, cfg.GOWORK()); err != nil {
 		log.Fatalf("unable to create temporary workspace: %v\n", err)
 	}
 	defer func() {
@@ -141,15 +147,15 @@ func main() {
 		}
 	}()
 
-	if err := os.MkdirAll(base.Cache, 0755); err != nil {
-		log.Fatalf("unable to create cache at %v: %v\n", base.Cache, err)
+	if err := os.MkdirAll(cfg.Cache, 0755); err != nil {
+		log.Fatalf("unable to create cache at %v: %v\n", cfg.Cache, err)
 	}
 
 	if err := os.Setenv("GOWORK", wfWork); err != nil {
 		log.Fatalf("unable to set GOWORK: %v\n", err)
 	}
 
-	out, err := main2(paths, false)
+	out, err := main2(paths, false, cfg)
 
 	if err != nil {
 		log.Println(err.Error())
@@ -163,7 +169,7 @@ func main() {
 	}
 	fmt.Println("\n--- PACKAGE CHANGES ---")
 	for _, patch := range out.Packages {
-		printPatch(patch)
+		printPatch(patch, cfg)
 	}
 
 	// Don't apply next steps (patches)
@@ -177,15 +183,15 @@ func main() {
 		if pin.Imported {
 			if !madeImportDir {
 				madeImportDir = true
-				if err := os.Mkdir(base.ImportDir, 0755); err != nil {
-					log.Printf("ERROR: unable to create folder for importing modules: %v: %v", base.ImportDir, err)
+				if err := os.Mkdir(cfg.ImportDir, 0755); err != nil {
+					log.Printf("ERROR: unable to create folder for importing modules: %v: %v", cfg.ImportDir, err)
 					failed = true
 					break
 				}
 			}
 			pin.Dir = importFolderName(pin.Path)
-			pin.Dir = filepath.Join(base.ImportDir, pin.Dir)
-			if err := importModule(pin, *vcsFlag); err != nil {
+			pin.Dir = filepath.Join(cfg.ImportDir, pin.Dir)
+			if err := importModule(pin, *vcsFlag, cfg); err != nil {
 				failed = true
 				log.Printf("ERROR: unable to import module %v@%v: %v\n", pin.Path, pin.Pinned, err)
 			}
@@ -197,7 +203,7 @@ func main() {
 	}
 
 	for _, patch := range out.Packages {
-		if err := applyPatch(patch); err != nil {
+		if err := applyPatch(patch, cfg); err != nil {
 			failed = true
 			log.Printf("unable to apply patch for %v: %v\n", patch.Path, err)
 		}
@@ -207,10 +213,10 @@ func main() {
 		log.Fatalln("\nAn error occurred while applying patches.\nPlease apply missing patches manually.")
 	}
 
-	backup := base.GOWORK() + ".backup"
-	if err = util.CopyFile(backup, base.GOWORK()); err != nil {
+	backup := cfg.GOWORK() + ".backup"
+	if err = util.CopyFile(backup, cfg.GOWORK()); err != nil {
 		log.Printf("unable to backup workspace to %v: %v\n", backup, err)
-	} else if err = util.CopyFile(base.GOWORK(), wfWork); err != nil {
+	} else if err = util.CopyFile(cfg.GOWORK(), wfWork); err != nil {
 		log.Printf("unable to update workspace: %v\n", wfWork)
 	} else {
 		fmt.Println("backed up workspace to", backup)
@@ -227,8 +233,8 @@ func main() {
 		}
 	}
 
-	if err := os.RemoveAll(base.Cache); err != nil {
-		log.Printf("unable to remove cache: %v: %v\n", base.Cache, err)
+	if err := os.RemoveAll(cfg.Cache); err != nil {
+		log.Printf("unable to remove cache: %v: %v\n", cfg.Cache, err)
 	}
 
 	fmt.Println("patches applied successfully!")
@@ -256,7 +262,7 @@ func printPin(pin base.ModulePin) {
 	}
 }
 
-func printPatch(patch base.PackagePatch) {
+func printPatch(patch base.PackagePatch, cfg *base.Config) {
 	fmt.Println("#", patch.Path)
 
 	if len(patch.Tags) == 0 {
@@ -277,9 +283,9 @@ func printPatch(patch base.PackagePatch) {
 		fmt.Printf("- %v:\n", file.Name)
 		if file.BaseFile == "" {
 			if !file.Build {
-				fmt.Printf("\tadded tag '!%v'\n", base.GOOS())
+				fmt.Printf("\tadded tag '!%v'\n", cfg.GOOS())
 			} else {
-				fmt.Printf("\tadded tag '%v'\n", base.GOOS())
+				fmt.Printf("\tadded tag '%v'\n", cfg.GOOS())
 			}
 		} else {
 			fmt.Printf("\tcopied to %v\n", file.BaseFile)
@@ -291,7 +297,7 @@ func printPatch(patch base.PackagePatch) {
 	}
 }
 
-func importModule(pin base.ModulePin, useVCS bool) error {
+func importModule(pin base.ModulePin, useVCS bool, cfg *base.Config) error {
 	if !pin.Imported {
 		return nil
 	}
@@ -314,7 +320,7 @@ func importModule(pin base.ModulePin, useVCS bool) error {
 		return err
 	}
 
-	rel, _ := filepath.Rel(filepath.Dir(base.GOWORK()), pin.Dir)
+	rel, _ := filepath.Rel(filepath.Dir(cfg.GOWORK()), pin.Dir)
 	// TODO: Go work use fails silently on a missing go.mod file, rerun 'go list' to verify it is now a main module position has changed
 	if err := util.GoWorkUse(rel); err != nil {
 		return err
@@ -328,7 +334,7 @@ func importModule(pin base.ModulePin, useVCS bool) error {
 	return nil
 }
 
-func applyPatch(patch base.PackagePatch) error {
+func applyPatch(patch base.PackagePatch, cfg *base.Config) error {
 	patch.Dir, _ = util.GoListPkgDir(patch.Path)
 
 	resolveFilePath := func(file string) string {
@@ -360,7 +366,7 @@ func applyPatch(patch base.PackagePatch) error {
 				return err
 			}
 
-			src, err = util.AppendTagString(src, base.GOOS(), "", fmt.Sprintf(base.FILE_NOTICE, file.BaseFile))
+			src, err = util.AppendTagString(src, cfg.GOOS(), "", fmt.Sprintf(base.FILE_NOTICE, file.BaseFile))
 			if err != nil {
 				return err
 			}
@@ -376,7 +382,7 @@ func applyPatch(patch base.PackagePatch) error {
 				return err
 			}
 
-			src, err = util.AppendTagString(src, base.GOOS(), "||", fmt.Sprintf(base.TAG_NOTICE, base.GOOS()))
+			src, err = util.AppendTagString(src, cfg.GOOS(), "||", fmt.Sprintf(base.TAG_NOTICE, cfg.GOOS()))
 			if err != nil {
 				return err
 			}
@@ -384,7 +390,7 @@ func applyPatch(patch base.PackagePatch) error {
 			name := file.Name
 			cnstr, _ := tags.ParseFileName(name)
 			if cnstr != nil {
-				name = strings.TrimSuffix(name, ".go") + "_" + base.GOOS() + ".go"
+				name = strings.TrimSuffix(name, ".go") + "_" + cfg.GOOS() + ".go"
 			}
 
 			err = os.WriteFile(resolveFilePath(name), src, 0744)
@@ -398,7 +404,7 @@ func applyPatch(patch base.PackagePatch) error {
 				return err
 			}
 
-			src, err = util.AppendTagString(src, "!"+base.GOOS(), "&&", fmt.Sprintf(base.TAG_NOTICE, "!"+base.GOOS()))
+			src, err = util.AppendTagString(src, "!"+cfg.GOOS(), "&&", fmt.Sprintf(base.TAG_NOTICE, "!"+cfg.GOOS()))
 			if err != nil {
 				return err
 			}

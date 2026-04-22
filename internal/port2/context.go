@@ -13,6 +13,7 @@ import (
 type Context struct {
 	handles map[*pkg2.Package]*Handle
 	pins    map[string]versionPin
+	config  *base.Config
 }
 
 type versionPin struct {
@@ -25,10 +26,11 @@ func (pin versionPin) isPinned() bool {
 	return pin.pinTo != ""
 }
 
-func NewContext() *Context {
+func NewContext(config *base.Config) *Context {
 	return &Context{
 		handles: make(map[*pkg2.Package]*Handle),
 		pins:    make(map[string]versionPin),
+		config:  config,
 	}
 }
 

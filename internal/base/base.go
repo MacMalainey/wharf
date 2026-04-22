@@ -14,23 +14,31 @@ import (
 	"github.com/zosopentools/wharf/internal/util"
 )
 
-func init() {
-	initInlines()
-	initGoEnv()
+// Config holds all configuration and environment information for Wharf
+type Config struct {
+	goenv     map[string]string
+	BuildTags map[string]bool
+	ImportDir string
+	Cache     string
 }
 
-func initGoEnv() {
-	var err error
-	goenv, err = util.GoEnv()
+// NewConfig creates a new Config instance with default values from the Go environment
+func NewConfig() (*Config, error) {
+	goenv, err := util.GoEnv()
 	if err != nil {
-		panic(fmt.Sprintf("unable to inspect Go environment (cannot execute 'go env'): %v", err))
+		return nil, fmt.Errorf("unable to inspect Go environment (cannot execute 'go env'): %v", err)
+	}
+
+	cfg := &Config{
+		goenv:     goenv,
+		BuildTags: make(map[string]bool),
 	}
 
 	// Set tags that Go figures out from the environment, such as GOARCH, CGO, and GOVERSION
-	BuildTags[goenv["GOARCH"]] = true
-	BuildTags[build.Default.Compiler] = true
+	cfg.BuildTags[goenv["GOARCH"]] = true
+	cfg.BuildTags[build.Default.Compiler] = true
 	if goenv["CGO_ENABLED"] == "1" {
-		BuildTags["cgo"] = true
+		cfg.BuildTags["cgo"] = true
 	}
 
 	var vnum int
@@ -38,7 +46,7 @@ func initGoEnv() {
 		var err error
 		vnum, err = strconv.Atoi(match[1])
 		if err != nil {
-			panic("go version minor number unable to parse to int")
+			return nil, fmt.Errorf("go version minor number unable to parse to int")
 		}
 	} else {
 		vnum = 18
@@ -46,37 +54,33 @@ func initGoEnv() {
 	}
 
 	for vnum >= 0 {
-		BuildTags[fmt.Sprintf("go1.%v", vnum)] = true
+		cfg.BuildTags[fmt.Sprintf("go1.%v", vnum)] = true
 		vnum -= 1
 	}
 
 	// Initialize some variables here to default values (can be overwritten)
-	goWorkDir := filepath.Dir(GOWORK())
-	Cache = filepath.Join(goWorkDir, ".wharf_cache") // TODO: move this to TMPDIR
+	goWorkDir := filepath.Dir(cfg.GOWORK())
+	cfg.Cache = filepath.Join(goWorkDir, ".wharf_cache") // TODO: move this to TMPDIR
 
 	// TODO: make this relative to the position of the GOWORK folder
 	// so that `go work use` uses a relative position instead of absolute
-	ImportDir = filepath.Join(goWorkDir, "wharf_port")
+	cfg.ImportDir = filepath.Join(goWorkDir, "wharf_port")
+
+	return cfg, nil
 }
 
-var goenv = make(map[string]string)
-var BuildTags = make(map[string]bool)
-
-var ImportDir string
-var Cache string
-
-func GOOS() string {
-	return goenv["GOOS"]
+func (c *Config) GOOS() string {
+	return c.goenv["GOOS"]
 }
 
-func GOARCH() string {
-	return goenv["GOARCH"]
+func (c *Config) GOARCH() string {
+	return c.goenv["GOARCH"]
 }
 
-func GOWORK() string {
-	return goenv["GOWORK"]
+func (c *Config) GOWORK() string {
+	return c.goenv["GOWORK"]
 }
 
-func GoEnv(key string) string {
-	return goenv[key]
+func (c *Config) GoEnv(key string) string {
+	return c.goenv[key]
 }

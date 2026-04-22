@@ -14,9 +14,10 @@ import (
 func main2(
 	paths []string,
 	mute bool,
+	cfg *base.Config,
 ) (*base.Output, error) {
-	ctx := port2.NewContext()
-	if err := run(paths, ctx, mute); err != nil {
+	ctx := port2.NewContext(cfg)
+	if err := run(paths, ctx, mute, cfg); err != nil {
 		return nil, err
 	}
 
@@ -28,8 +29,8 @@ func main2(
 	return out, nil
 }
 
-func run(paths []string, ctx *port2.Context, mute bool) error {
-	loader := pkg2.NewLoader()
+func run(paths []string, ctx *port2.Context, mute bool, cfg *base.Config) error {
+	loader := pkg2.NewLoader(cfg)
 	firstPass := true
 load:
 	tree, err := loader.List(paths)

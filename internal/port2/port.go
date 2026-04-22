@@ -311,7 +311,7 @@ func (handle *Handle) port() error {
 		return fmt.Errorf("unable to find a valid config")
 	}
 
-	pkgCacheDir := filepath.Join(base.Cache, pkg.Meta.ImportPath)
+	pkgCacheDir := filepath.Join(handle.ctx.config.Cache, pkg.Meta.ImportPath)
 	if err := os.MkdirAll(pkgCacheDir, 0740); err != nil {
 		return fmt.Errorf("unable to create cache directory for package: %w", err)
 	}
@@ -403,7 +403,7 @@ func (handle *Handle) applyExportDirective(build int, cache string, fiEdits file
 	pkg := handle.pkg
 	ccfg := pkg.Builds[build]
 	pcfg := pkg2.BuildConfig{
-		Platforms: []string{base.GOOS()},
+		Platforms: []string{handle.ctx.config.GOOS()},
 		Files:     make([]*pkg2.GoFile, 0, len(ccfg.Files)),
 	}
 
@@ -455,7 +455,7 @@ func (handle *Handle) applyExportDirective(build int, cache string, fiEdits file
 		}
 
 		repl := &pkg2.GoFile{
-			Name:    fmt.Sprintf("%v_%v.go", strings.TrimSuffix(gofile.Name, ".go"), base.GOOS()),
+			Name:    fmt.Sprintf("%v_%v.go", strings.TrimSuffix(gofile.Name, ".go"), handle.ctx.config.GOOS()),
 			Path:    cpath,
 			Cgo:     gofile.Cgo,
 			Syntax:  syntax,

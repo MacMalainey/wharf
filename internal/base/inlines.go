@@ -47,6 +47,10 @@ type PackageInline struct {
 	Exports map[string]ExportInline
 }
 
+func init() {
+	initInlines()
+}
+
 // Load the defaults on package init
 func initInlines() {
 	if err := yaml.Unmarshal(_DEFAULT_INLINES_EMBED, &Inlines); err != nil {

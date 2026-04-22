@@ -21,12 +21,14 @@ import (
 type Loader struct {
 	cache     map[string]*Package
 	debugPath string
+	config    *base.Config
 }
 
 // NewLoader creates a new Loader instance with an empty cache
-func NewLoader() *Loader {
+func NewLoader(config *base.Config) *Loader {
 	return &Loader{
-		cache: make(map[string]*Package, 50),
+		cache:  make(map[string]*Package, 50),
+		config: config,
 	}
 }
 
@@ -425,7 +427,7 @@ func (l *Loader) loadGoFile(file *GoFile, fset *token.FileSet, syntax bool, forc
 		return err
 	}
 
-	file.Tags = tags.Parse(file.Name, src, base.GOOS(), base.BuildTags)
+	file.Tags = tags.Parse(file.Name, src, l.config.GOOS(), l.config.BuildTags)
 	if _, ok := file.Tags.(tags.Ignored); ok && !forceLoad {
 		return nil
 	}
