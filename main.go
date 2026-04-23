@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -50,6 +51,8 @@ func main() {
 	forceFlag := flag.Bool("f", false, "Force operation even if imported module path exists")
 	versionFlag := flag.Bool("version", false, "Display version information")
 	mcpFlag := flag.Bool("mcp", false, "Start MCP server mode")
+	transportFlag := flag.String("transport", "stdio", "MCP transport type: stdio or http")
+	portFlag := flag.Int("port", 8080, "Port for MCP HTTP transport (only used when transport=http)")
 	flag.Parse()
 
 	// Turn off log flags
@@ -86,7 +89,7 @@ func main() {
 
 	// If --mcp is passed, start MCP server mode
 	if *mcpFlag {
-		if err := startMCPServer(); err != nil {
+		if err := startMCPServer(*transportFlag, *portFlag); err != nil {
 			log.Fatalf("MCP server error: %v", err)
 		}
 		os.Exit(0)
@@ -455,7 +458,7 @@ func importFolderName(importPath string) string {
 }
 
 // startMCPServer initializes and starts the MCP server
-func startMCPServer() error {
+func startMCPServer(transport string, port int) error {
 	// Determine version string
 	version := Version
 	if version == "" {
@@ -474,8 +477,40 @@ func startMCPServer() error {
 
 	// TODO: Add tools, prompts, and resources here
 
-	// Start the server with stdio transport
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	// Select transport based on flag
+	var mcpTransport mcp.Transport
+	switch strings.ToLower(transport) {
+	case "stdio":
+		mcpTransport = &mcp.StdioTransport{}
+		log.Println("Starting MCP server with stdio transport")
+	case "http":
+		addr := fmt.Sprintf("localhost:%d", port)
+		log.Printf("Starting MCP server with HTTP transport on %s", addr)
+
+		// Create HTTP handler for streamable transport
+		// The getServer function returns the same server for all requests
+		getServer := func(*http.Request) *mcp.Server {
+			return server
+		}
+		handler := mcp.NewStreamableHTTPHandler(getServer, nil)
+
+		// Start HTTP server
+		httpServer := &http.Server{
+			Addr:    addr,
+			Handler: handler,
+		}
+
+		// Run the HTTP server (blocking)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("HTTP server failed: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported transport type: %s (supported: stdio, http)", transport)
+	}
+
+	// Start the server with the selected transport
+	if err := server.Run(context.Background(), mcpTransport); err != nil {
 		return fmt.Errorf("failed to start MCP server: %w", err)
 	}
 
