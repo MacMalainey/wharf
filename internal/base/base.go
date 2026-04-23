@@ -22,9 +22,12 @@ type Config struct {
 	Cache     string
 }
 
-// NewConfig creates a new Config instance with default values from the Go environment
-func NewConfig() (*Config, error) {
-	goenv, err := util.GoEnv()
+// NewConfig creates a new Config instance with default values from the Go environment.
+// If workspacePath is empty, it runs 'go env' in the current directory.
+// Otherwise, it runs 'go env' in the provided workspace directory.
+func NewConfig(workspacePath string) (*Config, error) {
+	// Run go env in the specified directory (or current directory if empty)
+	goenv, err := util.GoEnv(workspacePath)
 	if err != nil {
 		return nil, fmt.Errorf("unable to inspect Go environment (cannot execute 'go env'): %v", err)
 	}
@@ -58,8 +61,10 @@ func NewConfig() (*Config, error) {
 		vnum -= 1
 	}
 
-	// Initialize some variables here to default values (can be overwritten)
+	// Use GOWORK from the environment (which was obtained from the specified directory)
 	goWorkDir := filepath.Dir(cfg.GOWORK())
+
+	// Initialize some variables here to default values (can be overwritten)
 	cfg.Cache = filepath.Join(goWorkDir, ".wharf_cache") // TODO: move this to TMPDIR
 
 	// TODO: make this relative to the position of the GOWORK folder

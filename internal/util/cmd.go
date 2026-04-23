@@ -37,8 +37,12 @@ func GitDiff(target string, output string) error {
 }
 
 // Run go env and return all it's contents
-func GoEnv() (map[string]string, error) {
+// If dir is not empty, runs go env in that directory
+func GoEnv(dir string) (map[string]string, error) {
 	cmd := exec.Command("go", "env", "-json")
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	out, err := runout(cmd)
 	if err != nil {
 		return nil, err

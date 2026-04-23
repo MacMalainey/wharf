@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/mattn/go-isatty"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zosopentools/wharf/internal/base"
 	"github.com/zosopentools/wharf/internal/pkg2"
 	"github.com/zosopentools/wharf/internal/tags"
@@ -47,13 +49,14 @@ func main() {
 	iDirFlag := flag.String("d", "", "Path to store imported modules") // TODO: Enable
 	forceFlag := flag.Bool("f", false, "Force operation even if imported module path exists")
 	versionFlag := flag.Bool("version", false, "Display version information")
+	mcpFlag := flag.Bool("mcp", false, "Start MCP server mode")
 	flag.Parse()
 
 	// Turn off log flags
 	log.SetFlags(0)
 
-	// Create config
-	cfg, err := base.NewConfig()
+	// Create config (empty string uses GOWORK from environment)
+	cfg, err := base.NewConfig("")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,6 +81,14 @@ func main() {
 		}
 
 		fmt.Println(Version)
+		os.Exit(0)
+	}
+
+	// If --mcp is passed, start MCP server mode
+	if *mcpFlag {
+		if err := startMCPServer(); err != nil {
+			log.Fatalf("MCP server error: %v", err)
+		}
 		os.Exit(0)
 	}
 
@@ -441,4 +452,32 @@ func importFolderName(importPath string) string {
 	}
 
 	return base
+}
+
+// startMCPServer initializes and starts the MCP server
+func startMCPServer() error {
+	// Determine version string
+	version := Version
+	if version == "" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Sum != "" {
+			version = info.Main.Version
+		} else {
+			version = "unknown"
+		}
+	}
+
+	// Create a new MCP server
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "wharf-mcp",
+		Version: version,
+	}, nil)
+
+	// TODO: Add tools, prompts, and resources here
+
+	// Start the server with stdio transport
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		return fmt.Errorf("failed to start MCP server: %w", err)
+	}
+
+	return nil
 }
