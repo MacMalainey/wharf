@@ -111,7 +111,12 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	if _, ranAsWharf := os.LookupEnv(WHARF_TEST_RUN); ranAsWharf {
-		if out, err := main2(os.Args[1:], true); err == nil {
+		cfg, err := base.NewConfig("")
+		if err != nil {
+			fmt.Printf("unable to load config: %v", err)
+			return
+		}
+		if out, err := main2(os.Args[1:], true, cfg); err == nil {
 			printJson(out)
 		} else {
 			fmt.Printf("unable to port: %v", err)
@@ -247,8 +252,12 @@ func TestModules(t *testing.T) {
 						t.Fatalf("go.work not created: unable to stat go.work: %v", err)
 					}
 
-					if err := os.MkdirAll(base.Cache, 0755); err != nil {
-						t.Fatalf("unable to create cache at %v: %v\n", base.Cache, err)
+					cfg, err := base.NewConfig(testRoot)
+					if err != nil {
+						t.Fatalf("unable to load config: %v", err)
+					}
+					if err := os.MkdirAll(cfg.Cache, 0755); err != nil {
+						t.Fatalf("unable to create cache at %v: %v\n", cfg.Cache, err)
 					}
 
 					cmd = exec.Command(testBin, test.Paths...)

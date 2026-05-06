@@ -475,7 +475,149 @@ func startMCPServer(transport string, port int) error {
 		Version: version,
 	}, nil)
 
-	// TODO: Add tools, prompts, and resources here
+	type inspectArgs struct {
+		WorkspacePath string   `json:"workspacePath,omitempty" jsonschema:"optional workspace directory where 'go env' should be resolved"`
+		Packages      []string `json:"packages" jsonschema:"package patterns to inspect in dry-run mode"`
+		Tags          []string `json:"tags,omitempty" jsonschema:"optional build tags to enable"`
+	}
+	type inspectResult struct {
+		Description string `json:"description"`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "inpsect",
+		Description: "Inspect packages and provide suggested module and package changes",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args inspectArgs) (*mcp.CallToolResult, inspectResult, error) {
+		_ = ctx
+		_ = req
+
+		if len(args.Packages) == 0 {
+			return nil, inspectResult{}, fmt.Errorf("at least one package must be provided")
+		}
+
+		cfg, err := base.NewConfig(args.WorkspacePath)
+		if err != nil {
+			return nil, inspectResult{}, err
+		}
+
+		for _, tag := range args.Tags {
+			if tag != "" {
+				cfg.BuildTags[tag] = true
+			}
+		}
+
+		if cfg.GOWORK() == "" {
+			return nil, inspectResult{}, fmt.Errorf("no workspace found; please initialize one using `go work init` and add modules")
+		}
+
+		wfWork := filepath.Join(filepath.Dir(cfg.GOWORK()), ".wharf.work")
+		if err := util.CopyFile(wfWork, cfg.GOWORK()); err != nil {
+			return nil, inspectResult{}, fmt.Errorf("unable to create temporary workspace: %w", err)
+		}
+		defer func() {
+			if err := os.Remove(wfWork); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Printf("unable to remove: %v: %v\n", wfWork, err)
+			}
+			if err := os.Remove(wfWork + ".sum"); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Printf("unable to remove: %v: %v\n", wfWork+".sum", err)
+			}
+		}()
+
+		if err := os.MkdirAll(cfg.Cache, 0755); err != nil {
+			return nil, inspectResult{}, fmt.Errorf("unable to create cache at %v: %w", cfg.Cache, err)
+		}
+		defer func() {
+			if err := os.RemoveAll(cfg.Cache); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Printf("unable to remove cache: %v: %v\n", cfg.Cache, err)
+			}
+		}()
+
+		origGoWork := os.Getenv("GOWORK")
+		if err := os.Setenv("GOWORK", wfWork); err != nil {
+			return nil, inspectResult{}, fmt.Errorf("unable to set GOWORK: %w", err)
+		}
+		defer func() {
+			if origGoWork == "" {
+				if err := os.Unsetenv("GOWORK"); err != nil {
+					log.Printf("unable to unset GOWORK: %v\n", err)
+				}
+			} else if err := os.Setenv("GOWORK", origGoWork); err != nil {
+				log.Printf("unable to restore GOWORK: %v\n", err)
+			}
+		}()
+
+		out, err := main2(args.Packages, false, cfg)
+		if err != nil {
+			return nil, inspectResult{}, err
+		}
+
+		// Build a human-readable description of the changes
+		var description strings.Builder
+		description.WriteString("Inspection completed successfully!\n\n")
+
+		// Describe module changes
+		if len(out.Modules) > 0 {
+			description.WriteString("=== MODULE CHANGES ===\n")
+			for _, pin := range out.Modules {
+				description.WriteString(fmt.Sprintf("• %s (%s): ", pin.Path, pin.Version))
+				if pin.Imported {
+					description.WriteString("IMPORTED\n")
+				} else if pin.Pinned != pin.Version {
+					description.WriteString(fmt.Sprintf("UPDATED TO %s\n", pin.Pinned))
+				} else {
+					description.WriteString("PINNED\n")
+				}
+			}
+			description.WriteString("\n")
+		}
+
+		// Describe package changes
+		if len(out.Packages) > 0 {
+			description.WriteString("=== PACKAGE CHANGES ===\n")
+			for _, patch := range out.Packages {
+				description.WriteString(fmt.Sprintf("• %s\n", patch.Path))
+
+				if len(patch.Tags) == 0 {
+					description.WriteString("  - Applied manual patch\n")
+					continue
+				}
+
+				description.WriteString("  - Applying tags to match platform(s): ")
+				for pidx, pltf := range patch.Tags {
+					description.WriteString(pltf)
+					if pidx < len(patch.Tags)-1 {
+						description.WriteString(", ")
+					}
+				}
+				description.WriteString("\n")
+
+				for _, file := range patch.Files {
+					description.WriteString(fmt.Sprintf("  - %s:\n", file.Name))
+					if file.BaseFile == "" {
+						if !file.Build {
+							description.WriteString(fmt.Sprintf("      Added tag '!%s'\n", cfg.GOOS()))
+						} else {
+							description.WriteString(fmt.Sprintf("      Added tag '%s'\n", cfg.GOOS()))
+						}
+					} else {
+						description.WriteString(fmt.Sprintf("      Copied to %s\n", file.BaseFile))
+
+						for _, symbol := range file.Symbols {
+							description.WriteString(fmt.Sprintf("      Replaced %s with %s\n", symbol.Original, symbol.New))
+						}
+					}
+				}
+			}
+		}
+
+		if len(out.Modules) == 0 && len(out.Packages) == 0 {
+			description.WriteString("No changes required - packages are already compatible.\n")
+		}
+
+		return nil, inspectResult{
+			Description: description.String(),
+		}, nil
+	})
 
 	// Select transport based on flag
 	var mcpTransport mcp.Transport
